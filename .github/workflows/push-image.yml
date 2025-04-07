@@ -111,43 +111,6 @@ jobs:
           --build-archive "${GITHUB_WORKSPACE}/build.oci" \
           --run-archive "${GITHUB_WORKSPACE}/run.oci"
 
-        for imageType in build run; do
-          echo "FROM docker.io/${DOCKERHUB_ORG}/${imageType}-${{ steps.registry-repo.outputs.name }}:${{ steps.event.outputs.tag }}" | \
-          docker buildx build -f - . \
-            --tag "gcr.io/${GCR_PROJECT}/${imageType}-${{ steps.registry-repo.outputs.name }}:${{ steps.event.outputs.tag }}" \
-            --tag "gcr.io/${GCR_PROJECT}/${imageType}-${{ steps.registry-repo.outputs.name }}:latest" \
-            --platform linux/amd64,linux/arm64 \
-            --provenance=false \
-            --push
-        done
-
-        # If the repository name contains 'bionic', let's push it to legacy image locations as well:
-        #    paketobuildpacks/{build/run}:{version}-{variant}
-        #    paketobuildpacks/{build/run}:{version}-{variant}-cnb
-        #    paketobuildpacks/{build/run}:{variant}-cnb
-        #    paketobuildpacks/{build/run}:{variant}
-        registry_repo="${{ steps.registry-repo.outputs.name }}"
-        if [[ ${registry_repo} == "bionic"-* ]];
-          then
-          # Strip the final part from a repo name after the `-`
-          # bionic-tiny --> tiny
-          variant="${registry_repo#bionic-}"
-
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/build.oci" "docker://${DOCKERHUB_ORG}/build:${{ steps.event.outputs.tag }}-${variant}"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/build.oci" "docker://${DOCKERHUB_ORG}/build:${{ steps.event.outputs.tag }}-${variant}-cnb"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/build.oci" "docker://${DOCKERHUB_ORG}/build:${variant}-cnb"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/build.oci" "docker://${DOCKERHUB_ORG}/build:${variant}"
-
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/run.oci" "docker://${DOCKERHUB_ORG}/run:${{ steps.event.outputs.tag }}-${variant}"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/run.oci" "docker://${DOCKERHUB_ORG}/run:${{ steps.event.outputs.tag }}-${variant}-cnb"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/run.oci" "docker://${DOCKERHUB_ORG}/run:${variant}-cnb"
-          sudo skopeo copy "oci-archive:${GITHUB_WORKSPACE}/run.oci" "docker://${DOCKERHUB_ORG}/run:${variant}"
-
-          sudo skopeo copy "docker://${DOCKERHUB_ORG}/build:${variant}-cnb" "docker://gcr.io/${GCR_PROJECT}/build:${variant}-cnb"
-          sudo skopeo copy "docker://${DOCKERHUB_ORG}/run:${variant}-cnb" "docker://gcr.io/${GCR_PROJECT}/run:${variant}-cnb"
-        fi
-
-
   failure:
     name: Alert on Failure
     runs-on: ubuntu-22.04
