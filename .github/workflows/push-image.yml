@@ -88,8 +88,7 @@ jobs:
     - name: Push to DockerHub
       id: push
       env:
-        DOCKERHUB_ORG: "paketobuildpacks"
-        GCR_PROJECT: "paketo-buildpacks"
+        DOCKERHUB_ORG: "pacostas"
       run: |
         # Ensure other scripts can access the .bin directory to install their own
         # tools after we install them as whatever user we are.
