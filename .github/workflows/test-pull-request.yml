@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       stacks: ${{ steps.get-stacks.outputs.stacks }}
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
@@ -23,28 +22,27 @@ jobs:
       - name: Get stacks images
         id: get-stacks
         run: |
-
           if [ -f ${{ env.STACKS_FILEPATH }} ]; then
             stacks=$(jq -c '.images' images.json)
           else
+            # Default fallback if images.json is missing
             stacks=$(jq -n -c '[
                 {
                   "name": "default",
                   "config_dir": "stack",
                   "output_dir": "build",
-                  "create_build_image": true,
+                  "create_build_image": true
                 }
             ]')
           fi
 
-          stacks=$(echo "$stacks" | jq 'map({
+          # Ensure the JSON structure is clean for the matrix
+          stacks=$(echo "$stacks" | jq -c 'map({
               name,
               config_dir,
               output_dir,
               create_build_image})')
 
-          stacks=$(jq -c <<< "$stacks" )
-          echo "stacks=$stacks"
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
   create_stack:
@@ -53,35 +51,36 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        stacks: ${{ fromJSON(needs.preparation.outputs.stacks) }}
+        stack: ${{ fromJSON(needs.preparation.outputs.stacks) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v6
 
-    # https://github.com/docker/setup-qemu-action
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    - name: Create stack ${{ matrix.stacks.name }}
+    - name: Create stack ${{ matrix.stack.name }}
       id: create-stack
       run: |
-        scripts/create.sh --stack-dir ${{ matrix.stacks.config_dir }} \
-                          --build-dir ${{ matrix.stacks.output_dir }}
+        scripts/create.sh --stack-dir ${{ matrix.stack.config_dir }} \
+                          --build-dir ${{ matrix.stack.output_dir }}
 
     - name: Upload run image
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
-        name: current-run-image-${{ matrix.stacks.name }}
-        path: "${{ matrix.stacks.output_dir }}/run.oci"
+        name: current-run-image-${{ matrix.stack.name }}
+        path: "${{ matrix.stack.output_dir }}/run.oci"
         if-no-files-found: error
+        retention-days: 1
 
     - name: Upload build image
-      if: ${{ matrix.stacks.create_build_image == true }}
-      uses: actions/upload-artifact@v4
+      if: ${{ matrix.stack.create_build_image == true }}
+      uses: actions/upload-artifact@v6
       with:
-        name: current-build-image-${{ matrix.stacks.name }}
-        path: "${{ matrix.stacks.output_dir }}/build.oci"
+        name: current-build-image-${{ matrix.stack.name }}
+        path: "${{ matrix.stack.output_dir }}/build.oci"
         if-no-files-found: error
+        retention-days: 1
 
   test:
     name: Acceptance Test
@@ -96,61 +95,52 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
-    - name: List available artifacts
-      uses: actions/github-script@v7
+    - name: Download All Images
+      uses: actions/download-artifact@v6
       with:
-        script: |
-          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            run_id: context.runId,
-          });
-          console.log('Available artifacts:');
-          for (const artifact of artifacts.data.artifacts) {
-            console.log(`  - ${artifact.name} (id: ${artifact.id})`);
-          }
+        pattern: current-*-image-*
+        path: download-images
 
-    - name: Download Build Image(s)
-      uses: actions/download-artifact@v4
-      with:
-        pattern: current-build-image-*
-        path: .
-
-    - name: Download Run Image(s)
-      uses: actions/download-artifact@v4
-      with:
-        pattern: current-run-image-*
-        path: .
-
-    - name: Debug - List downloaded artifacts
-      run: |
-        echo "Current directory:"
-        pwd
-        echo "Directory contents:"
-        ls -laR
-
-    - name: Create OCI artifacts destination directory
+    # v6 downloads patterns into subfolders: download-images/<artifact-name>/<file>
+    # We move them to the actual output_dir expected by the test script.
+    - name: Reconstruct OCI Structure
       run: |
         echo '${{ needs.preparation.outputs.stacks }}' | jq -c '.[]' | while read -r stack; do
           name=$(echo "$stack" | jq -r '.name')
-          output_dir=$(echo "$stack" | jq -r '.output_dir')
-          create_build_image=$(echo "$stack" | jq -r '.create_build_image')
-          mkdir -p $output_dir
-          mv "current-run-image-${name}/run.oci" "${output_dir}/run.oci"
-          if [ $create_build_image == 'true' ]; then
-            mv "current-build-image-${name}/build.oci" "${output_dir}/build.oci"
+          out_dir=$(echo "$stack" | jq -r '.output_dir')
+          create_build=$(echo "$stack" | jq -r '.create_build_image')
+
+          mkdir -p "$out_dir"
+
+          downloaded_src_run="download-images/current-run-image-${name}/run.oci"
+          if [ -f "$downloaded_src_run" ]; then
+            mv "$downloaded_src_run" "${out_dir}/run.oci"
+          else
+            echo "Run image missing for $name"
+            exit 1
+          fi
+
+          downloaded_src_build="download-images/current-build-image-${name}/build.oci"
+          if [ "$create_build" = "true" ]; then
+            if [ -f "$downloaded_src_build" ]; then
+              mv "$downloaded_src_build" "${out_dir}/build.oci"
+            else
+              echo "Build image missing for $name"
+              exit 1
+            fi
           fi
         done
 
     - name: Run Acceptance Tests
       run: ./scripts/test.sh --validate-stack-builds
 
-  upload:
+  upload-payload:
     name: Upload Workflow Event Payload
     runs-on: ubuntu-24.04
     steps:
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: event-payload
         path: ${{ github.event_path }}
+        retention-days: 1
