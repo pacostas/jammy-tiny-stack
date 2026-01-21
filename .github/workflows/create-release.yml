@@ -321,6 +321,12 @@ jobs:
         run_receipt: "${{ github.workspace }}/${{ matrix.arch.name }}-previous-run-receipt-${{ matrix.stacks.name }}"
         output_path: "${{ github.workspace }}/${{ matrix.arch.name }}-package-list-${{ matrix.stacks.name }}"
 
+    - name: Upload package list file
+      uses: actions/upload-artifact@v4
+      with:
+        name: "${{ matrix.arch.name }}-${{ matrix.stacks.name }}-package-list.json"
+        path: "${{ github.workspace }}/${{ matrix.arch.name }}-package-list-${{ matrix.stacks.name }}"
+
     - name: Generate USNs download asset pattern
       id: usn_download_pattern
       run: |
