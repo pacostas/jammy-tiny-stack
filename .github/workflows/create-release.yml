@@ -315,7 +315,7 @@ jobs:
     - name: Get Package List
       id: packages
       if: ${{ steps.previous_run.outputs.output_path != '' }}
-      uses: paketo-buildpacks/github-config/actions/stack/generate-package-list@main
+      uses: pacostas/github-config/actions/stack/generate-package-list@main
       with:
         build_receipt: "${{ github.workspace }}/${{ matrix.arch.name }}-previous-build-receipt-${{ matrix.stacks.name }}"
         run_receipt: "${{ github.workspace }}/${{ matrix.arch.name }}-previous-run-receipt-${{ matrix.stacks.name }}"
@@ -375,7 +375,7 @@ jobs:
 
     - name: Get New USNs
       id: usns
-      uses: paketo-buildpacks/github-config/actions/stack/get-usns@main
+      uses: pacostas/github-config/actions/stack/get-usns@main
       with:
         distribution: ${{ needs.preparation.outputs.os_codename }}
         packages_filepath: "./${{ matrix.arch.name }}-package-list-${{ matrix.stacks.name }}"
