@@ -992,6 +992,10 @@ jobs:
       with:
         pattern: current-run-image-*
 
+    - name: Show the downloaded images
+      run: |
+        tree -L 2 .
+
     - name: Create OCI artifacts destination directory
       run: |
         echo '${{ needs.preparation.outputs.stacks }}' | jq -c '.[]' | while read -r stack; do
