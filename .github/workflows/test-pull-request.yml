@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       stacks: ${{ steps.get-stacks.outputs.stacks }}
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
@@ -22,27 +23,28 @@ jobs:
       - name: Get stacks images
         id: get-stacks
         run: |
+
           if [ -f ${{ env.STACKS_FILEPATH }} ]; then
             stacks=$(jq -c '.images' images.json)
           else
-            # Default fallback if images.json is missing
             stacks=$(jq -n -c '[
                 {
                   "name": "default",
                   "config_dir": "stack",
                   "output_dir": "build",
-                  "create_build_image": true
+                  "create_build_image": true,
                 }
             ]')
           fi
 
-          # Ensure the JSON structure is clean for the matrix
-          stacks=$(echo "$stacks" | jq -c 'map({
+          stacks=$(echo "$stacks" | jq 'map({
               name,
               config_dir,
               output_dir,
               create_build_image})')
 
+          stacks=$(jq -c <<< "$stacks" )
+          echo "stacks=$stacks"
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
 
   create_stack:
@@ -51,36 +53,35 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        stack: ${{ fromJSON(needs.preparation.outputs.stacks) }}
+        stacks: ${{ fromJSON(needs.preparation.outputs.stacks) }}
     steps:
     - name: Checkout
       uses: actions/checkout@v6
 
+    # https://github.com/docker/setup-qemu-action
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
-    - name: Create stack ${{ matrix.stack.name }}
+    - name: Create stack ${{ matrix.stacks.name }}
       id: create-stack
       run: |
-        scripts/create.sh --stack-dir ${{ matrix.stack.config_dir }} \
-                          --build-dir ${{ matrix.stack.output_dir }}
+        scripts/create.sh --stack-dir ${{ matrix.stacks.config_dir }} \
+                          --build-dir ${{ matrix.stacks.output_dir }}
 
     - name: Upload run image
       uses: actions/upload-artifact@v6
       with:
-        name: current-run-image-${{ matrix.stack.name }}
-        path: "${{ matrix.stack.output_dir }}/run.oci"
+        name: current-run-image-${{ matrix.stacks.name }}
+        path: "${{ matrix.stacks.output_dir }}/run.oci"
         if-no-files-found: error
-        retention-days: 1
 
     - name: Upload build image
-      if: ${{ matrix.stack.create_build_image == true }}
+      if: ${{ matrix.stacks.create_build_image == true }}
       uses: actions/upload-artifact@v6
       with:
-        name: current-build-image-${{ matrix.stack.name }}
-        path: "${{ matrix.stack.output_dir }}/build.oci"
+        name: current-build-image-${{ matrix.stacks.name }}
+        path: "${{ matrix.stacks.output_dir }}/build.oci"
         if-no-files-found: error
-        retention-days: 1
 
   test:
     name: Acceptance Test
@@ -95,46 +96,33 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
-    - name: Download All Images
+    - name: Download Build Image(s)
       uses: actions/download-artifact@v6
       with:
-        pattern: current-*-image-*
-        path: download-images
+        pattern: current-build-image-*
 
-    # v6 downloads patterns into subfolders: download-images/<artifact-name>/<file>
-    # We move them to the actual output_dir expected by the test script.
-    - name: Reconstruct OCI Structure
+    - name: Download Run Image(s)
+      uses: actions/download-artifact@v6
+      with:
+        pattern: current-run-image-*
+
+    - name: Create OCI artifacts destination directory
       run: |
         echo '${{ needs.preparation.outputs.stacks }}' | jq -c '.[]' | while read -r stack; do
           name=$(echo "$stack" | jq -r '.name')
-          out_dir=$(echo "$stack" | jq -r '.output_dir')
-          create_build=$(echo "$stack" | jq -r '.create_build_image')
-
-          mkdir -p "$out_dir"
-
-          downloaded_src_run="download-images/current-run-image-${name}/run.oci"
-          if [ -f "$downloaded_src_run" ]; then
-            mv "$downloaded_src_run" "${out_dir}/run.oci"
-          else
-            echo "Run image missing for $name"
-            exit 1
-          fi
-
-          downloaded_src_build="download-images/current-build-image-${name}/build.oci"
-          if [ "$create_build" = "true" ]; then
-            if [ -f "$downloaded_src_build" ]; then
-              mv "$downloaded_src_build" "${out_dir}/build.oci"
-            else
-              echo "Build image missing for $name"
-              exit 1
-            fi
+          output_dir=$(echo "$stack" | jq -r '.output_dir')
+          create_build_image=$(echo "$stack" | jq -r '.create_build_image')
+          mkdir -p $output_dir
+          mv "current-run-image-${name}/run.oci" "${output_dir}/run.oci"
+          if [ $create_build_image == 'true' ]; then
+            mv "current-build-image-${name}/build.oci" "${output_dir}/build.oci"
           fi
         done
 
     - name: Run Acceptance Tests
       run: ./scripts/test.sh --validate-stack-builds
 
-  upload-payload:
+  upload:
     name: Upload Workflow Event Payload
     runs-on: ubuntu-24.04
     steps:
@@ -143,4 +131,3 @@ jobs:
       with:
         name: event-payload
         path: ${{ github.event_path }}
-        retention-days: 1
